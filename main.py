@@ -141,7 +141,7 @@ async def search_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👤 **Name:** {record['name']}\n"
             f"👴 **Father:** {record['fname']}\n"
             f"🏠 **Address:** {record['address']}\n"
-                ━━━━━━━━━━━━━━━━━━\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
         )
 
     if has_valid_data:
