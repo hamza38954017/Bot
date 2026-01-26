@@ -1,11 +1,10 @@
-# @title 🚀 Run Professional Telegram Bot (Render & Replit Compatible)
+# @title 🚀 Run Professional Telegram Bot (Render Fixed Version)
 import logging
 import time
 import requests
-import nest_asyncio
-import asyncio
 import threading
 import os
+import asyncio
 from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
 from telegram.constants import ParseMode, ChatType
@@ -18,8 +17,7 @@ from appwrite.exception import AppwriteException
 # ------------------------------------------------------------------
 # ⚙️ CONFIGURATION
 # ------------------------------------------------------------------
-# 🔴 PASTE YOUR NEW TOKEN BELOW IF YOU REVOKED THE OLD ONE
-BOT_TOKEN = "8551885799:AAGJSwJkt6tnpqa3mh0-ACwimcU5gY_Bqgs"
+BOT_TOKEN = "8551885799:AAEA8a7Cr2OPVFzuKss1WS4we7CnWEzNfyI"
 
 # External API Config
 API_URL = "https://api.x10.network/numapi.php"
@@ -33,24 +31,29 @@ APPWRITE_DB_ID = "697299e8002cc13b21b4"
 APPWRITE_COLLECTION_ID = "data" 
 
 # ------------------------------------------------------------------
-# 🌐 KEEP ALIVE SERVER (Dynamic Port for Render)
+# 🌐 KEEP ALIVE SERVER
 # ------------------------------------------------------------------
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "Bot is running! Web Server Active."
+    return "Bot is running! Render Deployment."
+
+@app.route('/health')
+def health():
+    return "OK", 200
 
 def run_web_server():
-    # Automatically uses Render's PORT or defaults to 8080 for Replit
+    # Render assigns a random PORT. We must listen on it.
     port = int(os.environ.get("PORT", 8080))
+    # '0.0.0.0' tells Flask to listen on all public IPs (Required for Render)
     app.run(host='0.0.0.0', port=port)
 
 # ------------------------------------------------------------------
 # 🔧 SETUP
 # ------------------------------------------------------------------
 
-nest_asyncio.apply()
+# REMOVED nest_asyncio (Not needed for Render)
 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -89,10 +92,8 @@ def save_to_appwrite(name, fname, mobile, address):
             'name': str(name),
             'fname': str(fname),
             'mobile': str(mobile),
-            'address': str(address),
-            'timestamp': int(time.time())
+            'address': str(address)
         }
-        # Using ID.unique() prevents crashes on duplicate/multiple numbers
         databases.create_document(APPWRITE_DB_ID, APPWRITE_COLLECTION_ID, ID.unique(), data)
         return True
     except Exception as e:
@@ -263,23 +264,20 @@ async def num_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             final_text = f"✅ **RESULTS FOR** `{mobile_number}`\n"
             count = 0
 
-            # Show ALL results (Loop logic)
             for person in results:
                 name = person.get("name", "N/A")
                 fname = person.get("fname", "N/A")
                 mob = person.get("mobile", "N/A")
                 addr = person.get("address", "N/A")
 
-                # Show first 5 results in chat
                 if count < 5:
                     final_text += f"\n📱 **Mobile:** `{mob}`\n👤 **Name:** `{name}`\n👨‍👦 **Father:** `{fname}`\n📍 **Addr:** `{addr}`\n──────────────────"
 
-                # Save ALL results to DB
                 save_to_appwrite(name, fname, mob, addr)
                 count += 1
 
             if count > 5:
-                final_text += f"\n...and {count - 5} more records saved to DB."
+                final_text += f"\n...and {count - 5} records"
 
             final_text += "\n✨ **Credit : Dr. Hamza**"
             await search_msg.edit_text(final_text, parse_mode=ParseMode.MARKDOWN)
@@ -299,32 +297,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 # ------------------------------------------------------------------
-# ▶️ RUNNER (AUTO-RESTART + WEB SERVER)
+# ▶️ RUNNER (RENDER READY)
 # ------------------------------------------------------------------
 
 if __name__ == '__main__':
     # 1. Start Web Server in Background Thread
+    # We must use '0.0.0.0' and os.environ.get("PORT") for Render
     t = threading.Thread(target=run_web_server)
     t.daemon = True
     t.start()
+    
+    print("✅ Web Server Started.")
 
-    print("✅ Bot Started! Web Server Active.")
-
-    # 2. Main Infinite Loop
-    while True:
-        try:
-            application = ApplicationBuilder().token(BOT_TOKEN).build()
-            
-            application.add_handler(CommandHandler('start', start))
-            application.add_handler(CommandHandler('menu', menu))
-            application.add_handler(CommandHandler('num', num_handler))
-            application.add_handler(CommandHandler('api', api_info))
-            application.add_handler(CallbackQueryHandler(button_handler))
-            application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-
-            print("✅ Polling Started...")
-            application.run_polling(allowed_updates=Update.ALL_TYPES)
-        except Exception as e:
-            logging.error(f"⚠️ CRITICAL ERROR: {e}")
-            print("🔄 Bot crashed! Restarting in 5 seconds...")
-            time.sleep(5)
+    # 2. Run Bot (Blocking Mode - No Loop Needed for Render)
+    # Render will auto-restart the script if it crashes.
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
+    
+    application.add_handler(CommandHandler('start', start))
+    application.add_handler(CommandHandler('menu', menu))
+    application.add_handler(CommandHandler('num', num_handler))
+    application.add_handler(CommandHandler('api', api_info))
+    application.add_handler(CallbackQueryHandler(button_handler))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    print("✅ Bot is Polling...")
+    application.run_polling()
