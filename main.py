@@ -1,29 +1,21 @@
-# @title 🚀 Run Generator (Fixed API Parsing)
-import requests
-import random
-import threading
-import time
-import warnings
-import datetime
 import logging
-from concurrent.futures import ThreadPoolExecutor
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
+import requests
+import threading
+import os
+from flask import Flask
+from telegram import Update
+from telegram.constants import ParseMode
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 from appwrite.client import Client
 from appwrite.services.databases import Databases
-
-# ------------------------------------------------------------------
-# 🔇 SUPPRESS WARNINGS
-# ------------------------------------------------------------------
-warnings.filterwarnings("ignore", category=DeprecationWarning)
-logging.getLogger("urllib3").setLevel(logging.ERROR)
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # ------------------------------------------------------------------
 # ⚙️ CONFIGURATION
 # ------------------------------------------------------------------
-PREFIXES = [94718, 78359, 77668, 93135, 97161, 62092, 90157, 78277, 88513, 99109]
-API_URL = "https://api.x10.network/numapi.php"
-API_KEY = "num_devil"
+# ⚠️ PASTE YOUR TELEGRAM BOT TOKEN BELOW
+TELEGRAM_BOT_TOKEN = "8551885799:AAFwzXsK8xuc0HPgVjCK1HdyGPMT9gVZLwo"
 
 # Appwrite Config
 APPWRITE_ENDPOINT = "https://fra.cloud.appwrite.io/v1"
@@ -32,171 +24,148 @@ APPWRITE_API_KEY = "standard_e1eb40bc704c26bff01939550bfa18f741d15a704b92ef41676
 APPWRITE_DB_ID = "697299e8002cc13b21b4"
 APPWRITE_COLLECTION_ID = "data"
 
-CONCURRENT_THREADS = 3
-
-USER_AGENTS = [
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.127 Safari/537.36",
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.159 Safari/537.36"
-]
+# API Config
+API_URL = "https://api.x10.network/numapi.php"
+API_KEY = "num_devil"
 
 # ------------------------------------------------------------------
-# 🔌 ROBUST SETUP
+# 🌐 DUMMY WEB SERVER (FOR RENDER FREE TIER)
 # ------------------------------------------------------------------
+app = Flask(__name__)
 
-# 1. Setup Session with Retry & Increased Pool Size
-session = requests.Session()
-retry_strategy = Retry(
-    total=3,
-    backoff_factor=2,
-    status_forcelist=[429, 500, 502, 503, 504],
-)
-adapter = HTTPAdapter(
-    max_retries=retry_strategy,
-    pool_connections=100,
-    pool_maxsize=100
-)
-session.mount("https://", adapter)
-session.mount("http://", adapter)
+@app.route('/')
+def health_check():
+    return "Bot is Alive!"
 
-# 2. Appwrite Setup
+def run_web_server():
+    # Render assigns the port automatically in the environment variable 'PORT'
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+
+# ------------------------------------------------------------------
+# 🔌 SETUP
+# ------------------------------------------------------------------
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.INFO
+)
+
 client = Client()
 client.set_endpoint(APPWRITE_ENDPOINT)
 client.set_project(APPWRITE_PROJECT_ID)
 client.set_key(APPWRITE_API_KEY)
 databases = Databases(client)
 
-stats = {"total": 0, "success": 0, "duplicates": 0, "errors": 0}
-stats_lock = threading.Lock()
+session = requests.Session()
+retry_strategy = Retry(
+    total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504]
+)
+adapter = HTTPAdapter(max_retries=retry_strategy)
+session.mount("https://", adapter)
 
 # ------------------------------------------------------------------
-# 🛠 LOGIC
+# 🛠 HELPER FUNCTIONS
 # ------------------------------------------------------------------
 
-def save_to_appwrite(data_dict):
+def fetch_data(mobile_number):
     try:
-        databases.create_document(
-            APPWRITE_DB_ID,
-            APPWRITE_COLLECTION_ID,
-            data_dict['mobile'], # Using Mobile as ID to prevent duplicates easily
-            data_dict
-        )
+        params = {"action": "api", "key": API_KEY, "number": mobile_number}
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36"}
+        response = session.get(API_URL, params=params, headers=headers, timeout=20)
+        try:
+            data = response.json()
+        except:
+            return []
+        
+        if isinstance(data, list): return data
+        elif isinstance(data, dict):
+            if data.get('error') or data.get('response') == 'error': return []
+            return [data]
+        return []
+    except Exception as e:
+        logging.error(f"API Fetch Error: {e}")
+        return []
+
+def save_to_appwrite(data_dict, doc_id):
+    try:
+        databases.create_document(APPWRITE_DB_ID, APPWRITE_COLLECTION_ID, doc_id, data_dict)
         return "success"
     except Exception as e:
         if "409" in str(e): return "duplicate"
-        print(f"⚠️ DB Error: {str(e)[:50]}")
+        logging.error(f"Appwrite DB Error: {e}")
         return "error"
 
-def generate_random_number():
-    prefix = random.choice(PREFIXES)
-    suffix = random.randint(10000, 99999)
-    return f"{prefix}{suffix}"
-
-def process_pipeline(thread_id):
-    print(f"🚀 Pipeline {thread_id} active...")
-
-    while True:
-        mobile_number = generate_random_number()
-        headers = {"User-Agent": random.choice(USER_AGENTS)}
-
-        try:
-            params = {"action": "api", "key": API_KEY, "number": mobile_number}
-
-            response = session.get(
-                API_URL,
-                params=params,
-                headers=headers,
-                timeout=20
-            )
-
-            try:
-                data = response.json()
-            except:
-                continue
-
-            # --- 👇 FIXED JSON PARSING 👇 ---
-            results = []
-            
-            # The Bot code showed the structure is: data -> data -> results
-            if isinstance(data, dict):
-                outer = data.get("data", {})
-                if isinstance(outer, dict):
-                    inner = outer.get("data", {})
-                    if isinstance(inner, dict):
-                        results = inner.get("results", [])
-            elif isinstance(data, list):
-                results = data
-
-            # Update Stats Total
-            with stats_lock:
-                stats["total"] += 1
-                curr_total = stats["total"]
-
-            if results:
-                found_valid_data = False
-
-                for p in results:
-                    # --- CHECKING DATA ---
-                    raw_name = p.get("name")
-                    
-                    # If name is bad, skip
-                    if not raw_name or str(raw_name).strip() == "" or str(raw_name).strip() == "N/A":
-                        continue 
-
-                    found_valid_data = True
-
-                    # Prepare Data
-                    raw_address = str(p.get("address", "N/A"))
-                    clean_address = raw_address.replace("!", ", ").replace(" ,", ",").strip()
-                    if len(clean_address) > 250: clean_address = clean_address[:250]
-
-                    # Note: API usually returns "fname", not "father_name"
-                    fname = str(p.get("fname", p.get("father_name", "N/A")))
-
-                    record = {
-                        'name': str(raw_name),
-                        'fname': fname,
-                        'mobile': str(p.get("mobile", mobile_number)),
-                        'address': clean_address
-                    }
-
-                    status = save_to_appwrite(record)
-
-                    if status == "success":
-                        with stats_lock: stats["success"] += 1
-                        print(f"✅ [{curr_total}] SAVED | {record['mobile']}")
-                    elif status == "duplicate":
-                        with stats_lock: stats["duplicates"] += 1
-                        print(f"🔁 [{curr_total}] EXISTS | {record['mobile']}")
-
-                if not found_valid_data:
-                     print(f"⚠️ [{curr_total}] Skipped (Data empty/N/A) | {mobile_number}")
-
-            else:
-                print(f"❌ [{curr_total}] Not Found | {mobile_number}")
-
-        except requests.exceptions.Timeout:
-            print(f"⏳ [{thread_id}] Slow Network... Waiting 5s")
-            time.sleep(5)
-
-        except requests.exceptions.ConnectionError:
-            print(f"🔌 [{thread_id}] Connection Lost... Waiting 10s")
-            time.sleep(10)
-
-        except Exception as e:
-            with stats_lock: stats["errors"] += 1
-            print(f"⚠️ Error: {str(e)[:50]}")
-
-        # Throttle
-        time.sleep(1.5)
-
 # ------------------------------------------------------------------
-# ▶️ RUNNER
+# 🤖 BOT HANDLERS
 # ------------------------------------------------------------------
 
-if __name__ == "__main__":
-    print(f"🔥 Starting {CONCURRENT_THREADS} Pipelines (Fixed Parsing)...")
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("🚀 **Bot is Online!**\nSend `/num <number>`", parse_mode=ParseMode.MARKDOWN)
 
-    with ThreadPoolExecutor(max_workers=CONCURRENT_THREADS) as executor:
-        for i in range(CONCURRENT_THREADS):
-            executor.submit(process_pipeline, i+1)
+async def search_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: `/num 9876543210`", parse_mode=ParseMode.MARKDOWN)
+        return
+
+    searched_number = context.args[0]
+    status_msg = await update.message.reply_text(f"🔍 Searching `{searched_number}`...", parse_mode=ParseMode.MARKDOWN)
+    results = fetch_data(searched_number)
+    
+    if not results:
+        await status_msg.edit_text("❌ No data found.")
+        return
+
+    response_text = f"📂 **Results for {searched_number}:**\n\n"
+    has_valid_data = False
+
+    for p in results:
+        raw_name = p.get("name")
+        if not raw_name or str(raw_name).strip() in ["", "N/A"]: continue
+        
+        has_valid_data = True
+        result_mobile = str(p.get("mobile", searched_number))
+        clean_address = str(p.get("address", "N/A")).replace("!", ", ").replace(" ,", ",").strip()[:250]
+
+        record = {
+            'name': str(raw_name),
+            'fname': str(p.get("father_name", "N/A")),
+            'mobile': result_mobile,
+            'address': clean_address
+        }
+
+        status = save_to_appwrite(record, result_mobile)
+        db_status = "✅ Saved" if status == "success" else ("🔁 Exists" if status == "duplicate" else "⚠️ Error")
+
+        response_text += (
+            f"📱 **Mobile:** `{record['mobile']}`\n"
+            f"👤 **Name:** {record['name']}\n"
+            f"👴 **Father:** {record['fname']}\n"
+            f"🏠 **Address:** {record['address']}\n"
+                ━━━━━━━━━━━━━━━━━━\n"
+        )
+
+    if has_valid_data:
+        if len(response_text) > 4000: response_text = response_text[:4000] + "\n...(truncated)"
+        await status_msg.edit_text(response_text, parse_mode=ParseMode.MARKDOWN)
+    else:
+        await status_msg.edit_text("⚠️ Data found but contained invalid names (N/A).")
+
+# ------------------------------------------------------------------
+# ▶️ MAIN EXECUTION
+# ------------------------------------------------------------------
+
+if __name__ == '__main__':
+    if "YOUR_TELEGRAM_BOT_TOKEN" in TELEGRAM_BOT_TOKEN:
+        print("❌ ERROR: Add Token in line 18!")
+        exit()
+
+    # 1. Start the Dummy Web Server in a separate thread
+    print("🌍 Starting Dummy Web Server...")
+    threading.Thread(target=run_web_server).start()
+
+    # 2. Start the Bot
+    print("🔥 Bot Started...")
+    application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("num", search_num))
+    application.run_polling()
