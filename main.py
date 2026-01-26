@@ -17,7 +17,7 @@ from appwrite.exception import AppwriteException
 # ------------------------------------------------------------------
 # ⚙️ CONFIGURATION
 # ------------------------------------------------------------------
-BOT_TOKEN = "8551885799:AAEA8a7Cr2OPVFzuKss1WS4we7CnWEzNfyI"
+BOT_TOKEN = "8551885799:AAFwzXsK8xuc0HPgVjCK1HdyGPMT9gVZLwo"
 
 # External API Config
 API_URL = "https://api.x10.network/numapi.php"
