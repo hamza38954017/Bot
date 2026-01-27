@@ -106,7 +106,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"👋 **Welcome to Nightmare for Strangers Bot!**\n\n"
         f"🔎 **How to Use:**\n"
         f"Send `/num` followed by the mobile number.\n"
-        f"Example: `/num 919876543210`\n\n"
+        f"Example: `/num 9876543210`\n\n"
         f"👨‍💻 **Developer:** {OWNER_TAG}\n"
         f"🆘 **Help/Contact:** {OWNER_TAG}"
     )
