@@ -28,8 +28,11 @@ APPWRITE_COLLECTION_ID = "data"
 API_URL = "https://api.x10.network/numapi.php"
 API_KEY = "num_devil"
 
+# Owner Config
+OWNER_TAG = "@Hamza3895"
+
 # ------------------------------------------------------------------
-# 🌐 DUMMY WEB SERVER (FOR RENDER FREE TIER)
+# 🌐 DUMMY WEB SERVER (FOR RENDER DEPLOYMENT)
 # ------------------------------------------------------------------
 app = Flask(__name__)
 
@@ -38,7 +41,6 @@ def health_check():
     return "Bot is Alive!"
 
 def run_web_server():
-    # Render assigns the port automatically in the environment variable 'PORT'
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
 
@@ -100,19 +102,28 @@ def save_to_appwrite(data_dict, doc_id):
 # ------------------------------------------------------------------
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🚀 **Bot is Online!**\nSend `/num <number>`", parse_mode=ParseMode.MARKDOWN)
+    welcome_text = (
+        f"👋 **Welcome to Nightmare for Strangers Bot!**\n\n"
+        f"🔎 **How to Use:**\n"
+        f"Send `/num` followed by the mobile number.\n"
+        f"Example: `/num 919876543210`\n\n"
+        f"👨‍💻 **Developer:** {OWNER_TAG}\n"
+        f"🆘 **Help/Contact:** {OWNER_TAG}"
+    )
+    await update.message.reply_text(welcome_text, parse_mode=ParseMode.MARKDOWN)
 
 async def search_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("⚠️ Usage: `/num 9876543210`", parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(f"⚠️ **Usage Error**\nPlease send: `/num 9876543210`", parse_mode=ParseMode.MARKDOWN)
         return
 
     searched_number = context.args[0]
-    status_msg = await update.message.reply_text(f"🔍 Searching `{searched_number}`...", parse_mode=ParseMode.MARKDOWN)
+    status_msg = await update.message.reply_text(f"🔍 **Searching:** `{searched_number}` ...", parse_mode=ParseMode.MARKDOWN)
+    
     results = fetch_data(searched_number)
     
     if not results:
-        await status_msg.edit_text("❌ No data found.")
+        await status_msg.edit_text("❌ **No data found.**")
         return
 
     response_text = f"📂 **Results for {searched_number}:**\n\n"
@@ -120,7 +131,9 @@ async def search_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     for p in results:
         raw_name = p.get("name")
-        if not raw_name or str(raw_name).strip() in ["", "N/A"]: continue
+        # Strict N/A Check
+        if not raw_name or str(raw_name).strip() in ["", "N/A", "null", "None"]: 
+            continue
         
         has_valid_data = True
         result_mobile = str(p.get("mobile", searched_number))
@@ -133,22 +146,32 @@ async def search_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
             'address': clean_address
         }
 
+        # Database Save
         status = save_to_appwrite(record, result_mobile)
-        db_status = "✅ Saved" if status == "success" else ("🔁 Exists" if status == "duplicate" else "⚠️ Error")
+        
+        # Status Icon Logic
+        if status == "success": db_status = "✅ Saved"
+        elif status == "duplicate": db_status = "🔁 Exists"
+        else: db_status = "⚠️ Error"
 
+        # Build Card
         response_text += (
             f"📱 **Mobile:** `{record['mobile']}`\n"
-            f"👤 **Name:** {record['name']}\n"
+            f"👤 **Name:** `{record['name']}`\n"
             f"👴 **Father:** {record['fname']}\n"
             f"🏠 **Address:** {record['address']}\n"
             f"━━━━━━━━━━━━━━━━━━\n"
         )
 
+    # Footer
+    response_text += f"\n🤖 **Bot by {OWNER_TAG}**"
+
     if has_valid_data:
         if len(response_text) > 4000: response_text = response_text[:4000] + "\n...(truncated)"
         await status_msg.edit_text(response_text, parse_mode=ParseMode.MARKDOWN)
     else:
-        await status_msg.edit_text("⚠️ Data found but contained invalid names (N/A).")
+        # Changed from "invalid names" to "No data found" as requested
+        await status_msg.edit_text("❌ **No data found.**")
 
 # ------------------------------------------------------------------
 # ▶️ MAIN EXECUTION
@@ -156,14 +179,14 @@ async def search_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 if __name__ == '__main__':
     if "YOUR_TELEGRAM_BOT_TOKEN" in TELEGRAM_BOT_TOKEN:
-        print("❌ ERROR: Add Token in line 18!")
+        print("❌ ERROR: Please paste your Telegram Bot Token in line 18!")
         exit()
 
-    # 1. Start the Dummy Web Server in a separate thread
-    print("🌍 Starting Dummy Web Server...")
+    # 1. Start Web Server (For Render)
+    print("🌍 Starting Web Server...")
     threading.Thread(target=run_web_server).start()
 
-    # 2. Start the Bot
+    # 2. Start Bot
     print("🔥 Bot Started...")
     application = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
