@@ -25,7 +25,8 @@ APPWRITE_DB_ID = "69781519001bb396e648"
 APPWRITE_COLLECTION_ID = "scrap"
 
 # API Config
-API_URL = "https://api.panel.shop/numapi.php"
+# UPDATED API URL
+API_URL = "https://api.paanel.shop/numapi.php"
 API_KEY = "num_wanted"
 
 # Owner Config
@@ -71,6 +72,7 @@ session.mount("https://", adapter)
 
 def fetch_data(mobile_number):
     try:
+        # Params construct the full URL: ...php?action=api&key=num_wanted&number=...
         params = {"action": "api", "key": API_KEY, "number": mobile_number}
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36"}
         response = session.get(API_URL, params=params, headers=headers, timeout=20)
@@ -79,6 +81,7 @@ def fetch_data(mobile_number):
         except:
             return []
         
+        # New API returns a list directly, this handles it perfectly
         if isinstance(data, list): return data
         elif isinstance(data, dict):
             if data.get('error') or data.get('response') == 'error': return []
@@ -137,6 +140,8 @@ async def search_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         has_valid_data = True
         result_mobile = str(p.get("mobile", searched_number))
+        
+        # New API uses "!" in address, this replace logic handles it correctly
         clean_address = str(p.get("address", "N/A")).replace("!", ", ").replace(" ,", ",").strip()[:250]
 
         record = {
@@ -170,7 +175,6 @@ async def search_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if len(response_text) > 4000: response_text = response_text[:4000] + "\n...(truncated)"
         await status_msg.edit_text(response_text, parse_mode=ParseMode.MARKDOWN)
     else:
-        # Changed from "invalid names" to "No data found" as requested
         await status_msg.edit_text("❌ **No data found.**")
 
 # ------------------------------------------------------------------
