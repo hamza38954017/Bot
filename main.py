@@ -25,8 +25,8 @@ APPWRITE_DB_ID = "69781519001bb396e648"
 APPWRITE_COLLECTION_ID = "scrap"
 
 # API Config
-API_URL = "https://api.x10.network/numapi.php"
-API_KEY = "num_devil"
+API_URL = "https://api.panel.shop/numapi.php"
+API_KEY = "num_wanted"
 
 # Owner Config
 OWNER_TAG = "@Hamza3895"
