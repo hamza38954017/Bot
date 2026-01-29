@@ -15,7 +15,7 @@ from urllib3.util.retry import Retry
 # ⚙️ CONFIGURATION
 # ------------------------------------------------------------------
 # ⚠️ PASTE YOUR TELEGRAM BOT TOKEN BELOW
-TELEGRAM_BOT_TOKEN = "8551885799:AAGKhx6iUJasf2NJGLdAP9zo-H9Bgdm0634"
+TELEGRAM_BOT_TOKEN = "8551885799:AAG1iqE8ObrqwETtjuYJhdw430TNoPGtqnc"
 
 # Appwrite Config
 APPWRITE_ENDPOINT = "https://fra.cloud.appwrite.io/v1"
