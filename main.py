@@ -2,6 +2,7 @@ import logging
 import requests
 import threading
 import os
+import asyncio
 from flask import Flask
 from telegram import Update
 from telegram.constants import ParseMode
@@ -20,12 +21,11 @@ TELEGRAM_BOT_TOKEN = "8551885799:AAG1iqE8ObrqwETtjuYJhdw430TNoPGtqnc"
 # Appwrite Config
 APPWRITE_ENDPOINT = "https://fra.cloud.appwrite.io/v1"
 APPWRITE_PROJECT_ID = "697814dc00318b052e40"
-APPWRITE_API_KEY = "standard_d568cc436f162ea258544b826d81f125ee5439fef59bb25bd975d0ccb06e696cf35afe619bb747290151129a1001162a2aa7447ae9d681b03321e072d987b442a8637628d034a90512ad9e9c4354ccaf7d4382a7a094cf8018f517917a76c46c629ddab6958a830e5bbf8d689e09b7dc8bda484ff06f55cdcc57d7ce4c4d6a98"
-APPWRITE_DB_ID = "69781519001bb396e648"
-APPWRITE_COLLECTION_ID = "scrap"
+APPWRITE_API_KEY = "standard_72cdac3120d700c22823ff92201c9ba3ebf6a35cfab43d5dce97a4bbe8867ead1d95740a84c15dd052ff4b733a2bcd7c72b3cf36c39cbe69fd58504ea77b881b95d41556bdb25c1ce890477039d83436075c65c52c54680c6c511259e81958bb793afb19da6ac4bbccbce40f8ce687e7acb42aa77248187535bca7b2465bf570"
+APPWRITE_DB_ID = "6986cd6f00356b66de5d"
+APPWRITE_COLLECTION_ID = "hell"
 
 # API Config
-# UPDATED API URL
 API_URL = "https://api.paanel.shop/numapi.php"
 API_KEY = "num_wanted"
 
@@ -72,21 +72,28 @@ session.mount("https://", adapter)
 
 def fetch_data(mobile_number):
     try:
-        # Params construct the full URL: ...php?action=api&key=num_wanted&number=...
         params = {"action": "api", "key": API_KEY, "number": mobile_number}
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36"}
+        
         response = session.get(API_URL, params=params, headers=headers, timeout=20)
         try:
             data = response.json()
         except:
             return []
         
-        # New API returns a list directly, this handles it perfectly
-        if isinstance(data, list): return data
+        # 1. New API Format: {"results": [...], "status": true}
+        if isinstance(data, dict) and "results" in data and isinstance(data["results"], list):
+            return data["results"]
+        # 2. Legacy: List
+        elif isinstance(data, list):
+            return data
+        # 3. Legacy: Single Dict
         elif isinstance(data, dict):
-            if data.get('error') or data.get('response') == 'error': return []
+            if data.get('error') or data.get('response') == 'error': 
+                return []
             return [data]
         return []
+
     except Exception as e:
         logging.error(f"API Fetch Error: {e}")
         return []
@@ -123,7 +130,9 @@ async def search_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
     searched_number = context.args[0]
     status_msg = await update.message.reply_text(f"🔍 **Searching:** `{searched_number}` ...", parse_mode=ParseMode.MARKDOWN)
     
-    results = fetch_data(searched_number)
+    # Run API fetch in a separate thread to avoid blocking the bot
+    loop = asyncio.get_running_loop()
+    results = await loop.run_in_executor(None, fetch_data, searched_number)
     
     if not results:
         await status_msg.edit_text("❌ **No data found.**")
@@ -131,33 +140,43 @@ async def search_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     response_text = f"📂 **Results for {searched_number}:**\n\n"
     has_valid_data = False
+    
+    # Keep track of valid entries to avoid duplicate text in message
+    valid_entries_count = 0
 
     for p in results:
-        raw_name = p.get("name")
-        # Strict N/A Check
-        if not raw_name or str(raw_name).strip() in ["", "N/A", "null", "None"]: 
+        # -------------------------------------------------------
+        # 🛡️ STRICT VALIDATION (MATCHING SCRAPER LOGIC)
+        # -------------------------------------------------------
+        raw_name = str(p.get("name", "")).strip()
+        # Look for 'fname' first, fallback to 'father_name'
+        raw_fname = str(p.get("fname", p.get("father_name", ""))).strip()
+        raw_address = str(p.get("address", "")).strip()
+
+        bad_values = ["", "N/A", "n/a", "None", "null", "NULL"]
+
+        # If ANY key field is bad, skip the entire record
+        if (raw_name in bad_values) or (raw_fname in bad_values) or (raw_address in bad_values):
             continue
         
         has_valid_data = True
+        valid_entries_count += 1
+        
         result_mobile = str(p.get("mobile", searched_number))
         
-        # New API uses "!" in address, this replace logic handles it correctly
-        clean_address = str(p.get("address", "N/A")).replace("!", ", ").replace(" ,", ",").strip()[:250]
+        # Clean Address
+        clean_address = raw_address.replace("!", ", ").replace(" ,", ",").strip()
+        if len(clean_address) > 250: clean_address = clean_address[:250]
 
         record = {
-            'name': str(raw_name),
-            'fname': str(p.get("father_name", "N/A")),
+            'name': raw_name,
+            'fname': raw_fname,
             'mobile': result_mobile,
             'address': clean_address
         }
 
-        # Database Save
-        status = save_to_appwrite(record, result_mobile)
-        
-        # Status Icon Logic
-        if status == "success": db_status = "✅ Saved"
-        elif status == "duplicate": db_status = "🔁 Exists"
-        else: db_status = "⚠️ Error"
+        # Database Save (Run in executor to avoid blocking)
+        status = await loop.run_in_executor(None, save_to_appwrite, record, result_mobile)
 
         # Build Card
         response_text += (
@@ -167,15 +186,21 @@ async def search_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🏠 **Address:** {record['address']}\n"
             f"━━━━━━━━━━━━━━━━━━\n"
         )
+        
+        # Limit message length to avoid Telegram limits
+        if valid_entries_count >= 5:
+            response_text += "\n⚠️ *Result limit reached...*"
+            break
 
     # Footer
     response_text += f"\n🤖 **Bot by {OWNER_TAG}**"
 
     if has_valid_data:
-        if len(response_text) > 4000: response_text = response_text[:4000] + "\n...(truncated)"
+        if len(response_text) > 4000: 
+            response_text = response_text[:4000] + "\n...(truncated)"
         await status_msg.edit_text(response_text, parse_mode=ParseMode.MARKDOWN)
     else:
-        await status_msg.edit_text("❌ **No data found.**")
+        await status_msg.edit_text(f"❌ **No valid data found.**\n(Data was found but filtered due to 'N/A' fields)")
 
 # ------------------------------------------------------------------
 # ▶️ MAIN EXECUTION
