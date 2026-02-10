@@ -150,7 +150,7 @@ async def search_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # -------------------------------------------------------
         raw_name = str(p.get("name", "")).strip()
         # Look for 'fname' first, fallback to 'father_name'
-        raw_fname = str(p.get("fname", p.get("father_name", ""))).strip()
+        raw_fname = str(p.get("fname", p.get("fname", ""))).strip()
         raw_address = str(p.get("address", "")).strip()
 
         bad_values = ["", "N/A", "n/a", "None", "null", "NULL"]
