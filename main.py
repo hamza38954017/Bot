@@ -84,7 +84,7 @@ def fetch_data(mobile_number):
         # 1. New API Format: {"results": [...], "status": true}
         if isinstance(data, dict) and "results" in data and isinstance(data["results"], list):
             return data["results"]
-        # 2. Legacy: List
+        # 2. Legacy: List (The format you provided matches this)
         elif isinstance(data, list):
             return data
         # 3. Legacy: Single Dict
@@ -100,7 +100,12 @@ def fetch_data(mobile_number):
 
 def save_to_appwrite(data_dict, doc_id):
     try:
-        databases.create_document(APPWRITE_DB_ID, APPWRITE_COLLECTION_ID, doc_id, data_dict)
+        # We ensure doc_id is a string and valid chars (alphanumeric, hyphen, underscore, period)
+        valid_doc_id = "".join(c for c in str(doc_id) if c.isalnum() or c in "._-")
+        if not valid_doc_id:
+            valid_doc_id = "rec_" + str(data_dict.get('mobile', 'unknown'))
+            
+        databases.create_document(APPWRITE_DB_ID, APPWRITE_COLLECTION_ID, valid_doc_id[:36], data_dict)
         return "success"
     except Exception as e:
         if "409" in str(e): return "duplicate"
@@ -141,53 +146,74 @@ async def search_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
     response_text = f"📂 **Results for {searched_number}:**\n\n"
     has_valid_data = False
     
-    # Keep track of valid entries to avoid duplicate text in message
     valid_entries_count = 0
 
     for p in results:
         # -------------------------------------------------------
-        # 🛡️ STRICT VALIDATION (MATCHING SCRAPER LOGIC)
+        # 🛡️ DATA MAPPING & VALIDATION
         # -------------------------------------------------------
+        # Extract fields based on your JSON structure:
+        # {"mobile": "...", "name": "...", "fname": "...", "address": "...", "circle": "..."}
+        
         raw_name = str(p.get("name", "")).strip()
-        # Look for 'fname' first, fallback to 'father_name'
-        raw_fname = str(p.get("fname", p.get("fname", ""))).strip()
+        raw_fname = str(p.get("fname", "")).strip()  # Directly use 'fname'
         raw_address = str(p.get("address", "")).strip()
+        raw_circle = str(p.get("circle", "")).strip()
+        raw_mobile = str(p.get("mobile", searched_number)).strip()
 
-        bad_values = ["", "N/A", "n/a", "None", "null", "NULL"]
+        bad_values = ["", "N/A", "n/a", "None", "null", "NULL", "NoneType"]
 
-        # If ANY key field is bad, skip the entire record
-        if (raw_name in bad_values) or (raw_fname in bad_values) or (raw_address in bad_values):
+        # If name is bad, likely the whole record is useless, but we can be lenient if address exists
+        if (raw_name in bad_values) and (raw_address in bad_values):
             continue
         
         has_valid_data = True
         valid_entries_count += 1
         
-        result_mobile = str(p.get("mobile", searched_number))
-        
-        # Clean Address
-        clean_address = raw_address.replace("!", ", ").replace(" ,", ",").strip()
-        if len(clean_address) > 250: clean_address = clean_address[:250]
+        # -------------------------------------------------------
+        # 🧹 ADDRESS CLEANING
+        # -------------------------------------------------------
+        # Raw: "S/O Shivaji Dhir!!!!Mahavir Bazar Jale!Jale!Darbhanga!Bihar!847302"
+        # We split by '!' and join with ', ' to remove the multiples
+        if raw_address not in bad_values:
+            address_parts = [x.strip() for x in raw_address.split('!') if x.strip()]
+            clean_address = ", ".join(address_parts)
+            if len(clean_address) > 250: 
+                clean_address = clean_address[:250] + "..."
+        else:
+            clean_address = "N/A"
 
+        # Prepare Record for Appwrite
         record = {
-            'name': raw_name,
-            'fname': raw_fname,
-            'mobile': result_mobile,
+            'name': raw_name if raw_name not in bad_values else "N/A",
+            'fname': raw_fname if raw_fname not in bad_values else "N/A",
+            'mobile': raw_mobile,
             'address': clean_address
         }
 
-        # Database Save (Run in executor to avoid blocking)
-        status = await loop.run_in_executor(None, save_to_appwrite, record, result_mobile)
+        # Database Save
+        await loop.run_in_executor(None, save_to_appwrite, record, raw_mobile)
 
-        # Build Card
+        # -------------------------------------------------------
+        # 📝 BUILD MESSAGE CARD
+        # -------------------------------------------------------
         response_text += (
-            f"📱 **Mobile:** `{record['mobile']}`\n"
+            f"📱 **Mobile:** `{raw_mobile}`\n"
             f"👤 **Name:** `{record['name']}`\n"
             f"👴 **Father:** {record['fname']}\n"
-            f"🏠 **Address:** {record['address']}\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
         )
         
-        # Limit message length to avoid Telegram limits
+        # Only show Address if it exists
+        if clean_address != "N/A":
+            response_text += f"🏠 **Address:** {clean_address}\n"
+            
+        # Only show Circle if it exists
+        if raw_circle and raw_circle not in bad_values:
+             response_text += f"📍 **Circle:** {raw_circle}\n"
+
+        response_text += f"━━━━━━━━━━━━━━━━━━\n"
+        
+        # Limit message length
         if valid_entries_count >= 5:
             response_text += "\n⚠️ *Result limit reached...*"
             break
@@ -200,7 +226,7 @@ async def search_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response_text = response_text[:4000] + "\n...(truncated)"
         await status_msg.edit_text(response_text, parse_mode=ParseMode.MARKDOWN)
     else:
-        await status_msg.edit_text(f"❌ **No valid data found.**\n(Data was found but filtered due to 'N/A' fields)")
+        await status_msg.edit_text(f"❌ **No valid data found.**\n(Data was found but filtered due to empty fields)")
 
 # ------------------------------------------------------------------
 # ▶️ MAIN EXECUTION
