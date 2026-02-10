@@ -27,7 +27,7 @@ APPWRITE_COLLECTION_ID = "hell"
 
 # API Config
 API_URL = "https://api.paanel.shop/numapi.php"
-API_KEY = "num_wanted"
+API_KEY = "ahsjyash"
 
 # Owner Config
 OWNER_TAG = "@Hamza3895"
