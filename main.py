@@ -84,10 +84,10 @@ def fetch_data(mobile_number):
         # 1. New API Format: {"results": [...], "status": true}
         if isinstance(data, dict) and "results" in data and isinstance(data["results"], list):
             return data["results"]
-        # 2. Legacy: List (The format you provided matches this)
+        # 2. List Format (Matches your specific request: [{"mobile":...}])
         elif isinstance(data, list):
             return data
-        # 3. Legacy: Single Dict
+        # 3. Single Dict
         elif isinstance(data, dict):
             if data.get('error') or data.get('response') == 'error': 
                 return []
@@ -100,7 +100,7 @@ def fetch_data(mobile_number):
 
 def save_to_appwrite(data_dict, doc_id):
     try:
-        # We ensure doc_id is a string and valid chars (alphanumeric, hyphen, underscore, period)
+        # Sanitize Doc ID
         valid_doc_id = "".join(c for c in str(doc_id) if c.isalnum() or c in "._-")
         if not valid_doc_id:
             valid_doc_id = "rec_" + str(data_dict.get('mobile', 'unknown'))
@@ -135,7 +135,7 @@ async def search_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
     searched_number = context.args[0]
     status_msg = await update.message.reply_text(f"🔍 **Searching:** `{searched_number}` ...", parse_mode=ParseMode.MARKDOWN)
     
-    # Run API fetch in a separate thread to avoid blocking the bot
+    # Run API fetch in a separate thread
     loop = asyncio.get_running_loop()
     results = await loop.run_in_executor(None, fetch_data, searched_number)
     
@@ -145,25 +145,25 @@ async def search_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     response_text = f"📂 **Results for {searched_number}:**\n\n"
     has_valid_data = False
-    
     valid_entries_count = 0
+
+    # Bad value filter
+    bad_values = ["", "N/A", "n/a", "None", "null", "NULL", "NoneType"]
 
     for p in results:
         # -------------------------------------------------------
-        # 🛡️ DATA MAPPING & VALIDATION
+        # 🛡️ DATA MAPPING (Matches your JSON structure)
         # -------------------------------------------------------
-        # Extract fields based on your JSON structure:
-        # {"mobile": "...", "name": "...", "fname": "...", "address": "...", "circle": "..."}
+        # JSON: {"mobile": "...", "name": "...", "fname": "...", "address": "...", "circle": "...", "alt": null, "email": null}
         
+        raw_mobile = str(p.get("mobile", searched_number)).strip()
         raw_name = str(p.get("name", "")).strip()
-        raw_fname = str(p.get("fname", "")).strip()  # Directly use 'fname'
+        raw_fname = str(p.get("fname", "")).strip()
         raw_address = str(p.get("address", "")).strip()
         raw_circle = str(p.get("circle", "")).strip()
-        raw_mobile = str(p.get("mobile", searched_number)).strip()
+        raw_email = str(p.get("email", "")).strip()
 
-        bad_values = ["", "N/A", "n/a", "None", "null", "NULL", "NoneType"]
-
-        # If name is bad, likely the whole record is useless, but we can be lenient if address exists
+        # Skip if name and address are both missing/bad
         if (raw_name in bad_values) and (raw_address in bad_values):
             continue
         
@@ -173,25 +173,27 @@ async def search_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # -------------------------------------------------------
         # 🧹 ADDRESS CLEANING
         # -------------------------------------------------------
-        # Raw: "S/O Shivaji Dhir!!!!Mahavir Bazar Jale!Jale!Darbhanga!Bihar!847302"
-        # We split by '!' and join with ', ' to remove the multiples
+        # Input: "39!Latriminarayanapur Nachchari!Mahua!Vaishali!Bihar!844126"
+        # Output: "39, Latriminarayanapur Nachchari, Mahua, Vaishali, Bihar, 844126"
+        clean_address = "N/A"
         if raw_address not in bad_values:
             address_parts = [x.strip() for x in raw_address.split('!') if x.strip()]
             clean_address = ", ".join(address_parts)
-            if len(clean_address) > 250: 
-                clean_address = clean_address[:250] + "..."
-        else:
-            clean_address = "N/A"
+            if len(clean_address) > 300: 
+                clean_address = clean_address[:300] + "..."
 
-        # Prepare Record for Appwrite
+        # -------------------------------------------------------
+        # 💾 PREPARE RECORD (APPWRITE)
+        # -------------------------------------------------------
         record = {
             'name': raw_name if raw_name not in bad_values else "N/A",
             'fname': raw_fname if raw_fname not in bad_values else "N/A",
             'mobile': raw_mobile,
-            'address': clean_address
+            'address': clean_address,
+            'circle': raw_circle if raw_circle not in bad_values else "N/A"
         }
 
-        # Database Save
+        # Save to Database (using mobile as ID to prevent duplicates)
         await loop.run_in_executor(None, save_to_appwrite, record, raw_mobile)
 
         # -------------------------------------------------------
@@ -203,17 +205,17 @@ async def search_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👴 **Father:** {record['fname']}\n"
         )
         
-        # Only show Address if it exists
         if clean_address != "N/A":
             response_text += f"🏠 **Address:** {clean_address}\n"
             
-        # Only show Circle if it exists
         if raw_circle and raw_circle not in bad_values:
              response_text += f"📍 **Circle:** {raw_circle}\n"
+             
+        if raw_email and raw_email not in bad_values and raw_email != "None":
+             response_text += f"📧 **Email:** {raw_email}\n"
 
         response_text += f"━━━━━━━━━━━━━━━━━━\n"
         
-        # Limit message length
         if valid_entries_count >= 5:
             response_text += "\n⚠️ *Result limit reached...*"
             break
@@ -226,7 +228,7 @@ async def search_num(update: Update, context: ContextTypes.DEFAULT_TYPE):
             response_text = response_text[:4000] + "\n...(truncated)"
         await status_msg.edit_text(response_text, parse_mode=ParseMode.MARKDOWN)
     else:
-        await status_msg.edit_text(f"❌ **No valid data found.**\n(Data was found but filtered due to empty fields)")
+        await status_msg.edit_text(f"❌ **No valid data found.**\n(Data was filtered due to empty fields)")
 
 # ------------------------------------------------------------------
 # ▶️ MAIN EXECUTION
